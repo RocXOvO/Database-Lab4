@@ -27,5 +27,3 @@ __pycache__/
 /tmp/
 /src/parser/build/
 *.zip
-
-deps/
