@@ -30,7 +30,7 @@ bool LRUReplacer::victim(frame_id_t* frame_id) {
     if (LRUlist_.empty()) {
         return false;
     }
-    *frame_id = LRUlist_.back();  // 获取最后一个元素（最不近期使用的
+    *frame_id = LRUlist_.back();  // 链表尾部是最久未使用的页面
     LRUhash_.erase(*frame_id);
     LRUlist_.pop_back();
     return true;
@@ -60,16 +60,19 @@ void LRUReplacer::unpin(frame_id_t frame_id) {
     //  支持并发锁
     //  选择一个frame取消固定
     std::lock_guard<std::mutex> lock(latch_);
-    // 如果已经在列表中，先将其移除
+    // 已经在可替换列表中，保持当前“最近使用”语义不变
     if (LRUhash_.count(frame_id)) {
-        return;  // 已经在 unpinned 状态
+        return;
     }
-    // 将其添加到列表末尾（表示最近被访问）
-    LRUlist_.emplace_back(frame_id);
-    LRUhash_[frame_id] = std::prev(LRUlist_.end());
+    // 追加到链表头部，表示最近被访问
+    LRUlist_.emplace_front(frame_id);
+    LRUhash_[frame_id] = LRUlist_.begin();
 }
 
 /**
  * @description: 获取当前replacer中可以被淘汰的页面数量
  */
-size_t LRUReplacer::Size() { return LRUlist_.size(); }
+size_t LRUReplacer::Size() {
+    std::lock_guard<std::mutex> lock(latch_);
+    return LRUlist_.size();
+}
