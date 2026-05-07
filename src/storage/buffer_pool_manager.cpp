@@ -39,13 +39,19 @@ void BufferPoolManager::update_page(Page *page, PageId new_page_id, frame_id_t n
     // 1 如果是脏页，写回级盘，并且把dirty置为false
     // 2 更新page table
     // 3 重置page的data，更新page id
-    if (page->is_dirty_) {
-        disk_manager_->write_page(new_page_id.fd, new_page_id.page_no, page->get_data(), PAGE_SIZE);
-        page->is_dirty_ = false;
+    PageId old_page_id = page->get_page_id();
+    if (old_page_id.page_no != INVALID_PAGE_ID) {
+        if (page->is_dirty_) {
+            disk_manager_->write_page(old_page_id.fd, old_page_id.page_no, page->get_data(), PAGE_SIZE);
+            page->is_dirty_ = false;
+        }
+        page_table_.erase(old_page_id);
     }
-    page_table_.erase(page->get_page_id());
+
+    page->reset_memory();
     page->id_ = new_page_id;
-    memset(page->data_, 0, PAGE_SIZE);
+    page->pin_count_ = 0;
+    page->is_dirty_ = false;
     page_table_[new_page_id] = new_frame_id;
 }
 
@@ -80,15 +86,11 @@ Page* BufferPoolManager::fetch_page(PageId page_id) {
     }
     
     Page *page = &pages_[frame_id];
-    if (page->is_dirty_) {
-        update_page(page, page->get_page_id(), frame_id);
-    }
-    
+    update_page(page, page_id, frame_id);
+
     disk_manager_->read_page(page_id.fd, page_id.page_no, page->get_data(), PAGE_SIZE);
-    page->id_ = page_id;
     page->pin_count_ = 1;
     page->is_dirty_ = false;
-    page_table_[page_id] = frame_id;
     replacer_->pin(frame_id);
     return page;
 }
@@ -178,16 +180,12 @@ Page* BufferPoolManager::new_page(PageId* page_id) {
     }
     
     Page *page = &pages_[frame_id];
-    if (page->is_dirty_) {
-        update_page(page, page->get_page_id(), frame_id);
-    }
-    
     page_id->page_no = disk_manager_->allocate_page(page_id->fd);
+    update_page(page, *page_id, frame_id);
+
+    // 分配新页后写入空页，保证磁盘页可读
     disk_manager_->write_page(page_id->fd, page_id->page_no, page->get_data(), PAGE_SIZE);
-    page->id_ = *page_id;
     page->pin_count_ = 1;
-    page->is_dirty_ = false;
-    page_table_[*page_id] = frame_id;
     replacer_->pin(frame_id);
     
     return page;
